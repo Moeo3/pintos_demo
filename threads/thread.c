@@ -383,7 +383,14 @@ void thread_set_priority (int new_priority) {
 void
 thread_set_priority (int new_priority)
 {
-  thread_current ()->priority = new_priority;
+  if (thread_current()->priority == thread_current()->ori_priority) {
+    thread_current()->priority = thread_current()->ori_priority = new_priority;
+  } else if (new_priority <= thread_current()->priority) {
+    thread_current()->ori_priority = new_priority;
+  } else {
+    thread_current()->priority = thread_current()->ori_priority = new_priority;
+  }
+
   if (!list_empty(&ready_list) && new_priority < list_entry(list_begin (&ready_list), struct thread, elem)->priority)
     thread_yield ();
 }
@@ -522,9 +529,11 @@ static void init_thread (struct thread *t, const char *name, int priority) {
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
+  t->priority = t->ori_priority = priority;
   t->magic = THREAD_MAGIC;
   t->tick_blocked = 0;
+  list_init(&t->hold);
+  t->wait = NULL;
   list_insert_ordered (&all_list, &t->allelem, cmp, NULL);
 }
 

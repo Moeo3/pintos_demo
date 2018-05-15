@@ -116,6 +116,10 @@ struct thread {
 #endif
   unsigned magic;
   int64_t tick_blocked;
+
+  int ori_priority;
+  struct list hold;
+  struct lock *wait;
 };
 
 /* If false (default), use round-robin scheduler.
