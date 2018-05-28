@@ -20,6 +20,8 @@
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
+static real load_avg = 0;
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -70,6 +72,21 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
+real int2real (int n) { return n * real_f; }
+int real2int_zero (real x) { return x / real_f; }
+int real2int_nearest (real x) {
+    if (x >= 0) return (x + real_f / 2) / real_f;
+    return (x - real_f / 2) / real_f;
+}
+real radd (real x, real y) { return x + y; }
+real rsub (real x, real y) { return x - y; }
+real rmul (real x, real y) { return x * y / real_f; }
+real rdiv (real x, real y) { return x * real_f / y; }
+real iadd (real x, int n) { return x + n * real_f; }
+real isub (real x, int n) { return x - n * real_f; }
+real imul (real x, int n) { return x * n; }
+real idiv (real x, int n) { return x / n; }
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -239,19 +256,6 @@ thread_block (void)
    be important: if the caller had disabled interrupts itself,
    it may expect that it can atomically unblock a thread and
    update other data. */
-void
-thread_unblock_origin (struct thread *t) 
-{
-  enum intr_level old_level;
-
-  ASSERT (is_thread (t));
-
-  old_level = intr_disable ();
-  ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
-  t->status = THREAD_READY;
-  intr_set_level (old_level);
-}
 void thread_unblock (struct thread *t) {
   enum intr_level old_level;
   
@@ -320,21 +324,7 @@ thread_exit (void)
 
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
-void
-thread_yield_origin (void) 
-{
-  struct thread *cur = thread_current ();
-  enum intr_level old_level;
-  
-  ASSERT (!intr_context ());
 
-  old_level = intr_disable ();
-  if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
-  cur->status = THREAD_READY;
-  schedule ();
-  intr_set_level (old_level);
-}
 void thread_yield (void) {
   struct thread *cur = thread_current ();
   enum intr_level old_level;
@@ -343,7 +333,8 @@ void thread_yield (void) {
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_insert_ordered (&ready_list, &cur->elem, cmp, NULL);
+    list_push_back (&ready_list, &cur->elem);
+  list_sort(&ready_list, cmp, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -400,37 +391,6 @@ int
 thread_get_priority (void) 
 {
   return thread_current ()->priority;
-}
-
-/* Sets the current thread's nice value to NICE. */
-void
-thread_set_nice (int nice UNUSED) 
-{
-  /* Not yet implemented. */
-}
-
-/* Returns the current thread's nice value. */
-int
-thread_get_nice (void) 
-{
-  /* Not yet implemented. */
-  return 0;
-}
-
-/* Returns 100 times the system load average. */
-int
-thread_get_load_avg (void) 
-{
-  /* Not yet implemented. */
-  return 0;
-}
-
-/* Returns 100 times the current thread's recent_cpu value. */
-int
-thread_get_recent_cpu (void) 
-{
-  /* Not yet implemented. */
-  return 0;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -505,21 +465,6 @@ is_thread (struct thread *t)
 
 /* Does basic initialization of T as a blocked thread named
    NAME. */
-static void
-init_thread_origin (struct thread *t, const char *name, int priority)
-{
-  ASSERT (t != NULL);
-  ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
-  ASSERT (name != NULL);
-
-  memset (t, 0, sizeof *t);
-  t->status = THREAD_BLOCKED;
-  strlcpy (t->name, name, sizeof t->name);
-  t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
-  t->magic = THREAD_MAGIC;
-  list_push_back (&all_list, &t->allelem);
-}
 static void init_thread (struct thread *t, const char *name, int priority) {
   ASSERT (t != NULL);
   ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
@@ -535,6 +480,8 @@ static void init_thread (struct thread *t, const char *name, int priority) {
   list_init(&t->hold);
   t->wait = NULL;
   list_insert_ordered (&all_list, &t->allelem, cmp, NULL);
+  t->nice = 0; 
+  t->recent_cpu = 0;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -661,4 +608,47 @@ void blocked_thread_check(struct thread *t, void *aux UNUSED) {
 }
 bool cmp (const struct list_elem *a, const struct list_elem *b, void *aux) {
   return (list_entry(a, struct thread, elem)->priority) > (list_entry(b, struct thread, elem)->priority);
+}
+
+int thread_count_ready() {
+  size_t count = list_size(&ready_list);
+  if (thread_current() != idle_thread)
+    ++ count;
+  return (int)count;
+}
+void thread_update_load_avg () {
+  load_avg = iadd(imul(load_avg, 59), thread_count_ready());
+  load_avg = idiv(load_avg, 60);
+}
+void thread_mlfqs_increase_recent_cpu () {
+  struct thread *t = thread_current();
+  if (t == idle_thread) return;
+  t->recent_cpu = iadd(t->recent_cpu, 1);
+}
+void thread_update_recent_cpu (struct thread *t) {
+  if (t == idle_thread) return;
+  real alpha = rdiv(imul(load_avg, 2), iadd(imul(load_avg, 2), 1));
+  t->recent_cpu = iadd(rmul(alpha, t->recent_cpu), t->nice);
+}
+void thread_mlfqs_update_priority(struct thread *t) {
+  if(t == idle_thread || !thread_mlfqs) return; 
+  int tmp = real2int_nearest(idiv(t->recent_cpu, 4));
+  int priority = PRI_MAX - tmp - (t->nice << 1);
+  t->priority = priority < PRI_MIN ? PRI_MIN : priority; 
+  t->priority = priority > PRI_MAX ? PRI_MAX : priority;
+}
+
+void thread_set_nice (int nice) {
+  thread_current()->nice = nice;
+  thread_mlfqs_update_priority(thread_current());
+  thread_yield();
+}
+int thread_get_nice() {
+  return thread_current()->nice;
+}
+int thread_get_load_avg() {
+  return real2int_nearest(imul(load_avg, 100));
+}
+int thread_get_recent_cpu() { 
+  return real2int_nearest(imul(thread_current()->recent_cpu, 100));
 }

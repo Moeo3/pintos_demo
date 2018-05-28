@@ -51,6 +51,7 @@ void cond_broadcast (struct condition *, struct lock *);
 
 void donate(struct lock* lock, int current_priority);
 bool lock_cmp(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool sema_cmp(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* Optimization barrier.
 

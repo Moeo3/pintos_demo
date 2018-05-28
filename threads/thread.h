@@ -5,6 +5,23 @@
 #include <list.h>
 #include <stdint.h>
 
+typedef long long int real;
+static const int real_f = 65536;
+
+real int2real (int);
+int real2int_zero (real);
+int real2int_nearest (real);
+
+real radd (real, real);
+real rsub (real, real);
+real rmul (real, real);
+real rdiv (real, real);
+
+real iadd (real, int);
+real isub (real, int);
+real imul (real, int);
+real idiv (real, int);
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -120,6 +137,9 @@ struct thread {
   int ori_priority;
   struct list hold;
   struct lock *wait;
+
+  int nice;
+  real recent_cpu;
 };
 
 /* If false (default), use round-robin scheduler.
@@ -160,5 +180,11 @@ int thread_get_load_avg (void);
 
 void blocked_thread_check(struct thread *t, void *aux UNUSED);
 bool cmp(const struct list_elem *a, const struct list_elem *b, void *aux);
+
+int thread_count_ready();
+void thread_update_load_avg ();
+void thread_mlfqs_increase_recent_cpu ();
+void thread_update_recent_cpu (struct thread *t);
+void thread_mlfqs_update_priority (struct thread *t);
 
 #endif /* threads/thread.h */
